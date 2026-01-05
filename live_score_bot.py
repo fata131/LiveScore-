@@ -22,36 +22,34 @@ HEADERS = {
 
 # ================= STORAGE =================
 favorites = {}
-live_cache = {}
 
 # ================= VIP =================
 premium_users = {
-    9167481626  # Lukmon Fatai Olamide
+    9167481626
 }
 
-VIP_PAYMENT_TEXT = (
+VIP_TEXT = (
     "💎 *VIP ACCESS*\n\n"
-    "Unlock premium features:\n"
-    "✔ Faster goal alerts\n"
-    "✔ Priority updates\n"
-    "✔ Exclusive features\n\n"
+    "✔ Faster updates\n"
+    "✔ Priority features\n"
+    "✔ Exclusive tools\n\n"
     "💳 *Payment Details*\n"
     "Bank: Opay\n"
     "Name: Lukmon Fatai Olamide\n"
     "Account: 9167481626"
 )
 
-# ================= API FUNCTIONS =================
-def safe_get(url):
+# ================= API SAFE CALL =================
+def api_get(url):
     try:
         r = requests.get(url, headers=HEADERS, timeout=10)
-        data = r.json()
-        return data.get("response", [])
+        return r.json().get("response", [])
     except:
         return []
 
+# ================= DATA =================
 def live_matches():
-    games = safe_get(f"{BASE_URL}/fixtures?live=all")
+    games = api_get(f"{BASE_URL}/fixtures?live=all")
     if not games:
         return "❌ No live matches now."
 
@@ -65,18 +63,18 @@ def live_matches():
     return msg
 
 def standings():
-    table = safe_get(f"{BASE_URL}/standings?league=39&season=2024")
-    if not table:
+    data = api_get(f"{BASE_URL}/standings?league=39&season=2024")
+    if not data:
         return "❌ Standings unavailable."
 
-    rows = table[0]["league"]["standings"][0][:6]
+    table = data[0]["league"]["standings"][0][:6]
     msg = "📊 *EPL STANDINGS*\n\n"
-    for t in rows:
+    for t in table:
         msg += f"{t['rank']}. {t['team']['name']} — {t['points']} pts\n"
     return msg
 
 def scorers():
-    players = safe_get(f"{BASE_URL}/players/topscorers?league=39&season=2024")
+    players = api_get(f"{BASE_URL}/players/topscorers?league=39&season=2024")
     if not players:
         return "❌ Data unavailable."
 
@@ -98,10 +96,9 @@ def menu():
         ],
         [
             InlineKeyboardButton("➕ Add Team", callback_data="add"),
-            InlineKeyboardButton("🔔 Goal Alerts", callback_data="alerts"),
+            InlineKeyboardButton("💎 VIP", callback_data="vip"),
         ],
         [
-            InlineKeyboardButton("💎 VIP Zone", callback_data="vip"),
             InlineKeyboardButton("🔄 Refresh", callback_data="refresh"),
         ],
     ])
@@ -109,7 +106,7 @@ def menu():
 # ================= HANDLERS =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "⚽ *LiveScore Bot*\nReal-time football updates 👇",
+        "⚽ *LiveScore Bot*\nReal football updates 👇",
         reply_markup=menu(),
         parse_mode="Markdown",
     )
@@ -137,13 +134,8 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text("✍️ Send team name:")
         return
 
-    elif q.data == "alerts":
-        context.user_data["alert"] = True
-        await q.edit_message_text("🔔 Send team name for alerts:")
-        return
-
     elif q.data == "vip":
-        text = "✅ VIP ACTIVE" if uid in premium_users else VIP_PAYMENT_TEXT
+        text = "✅ VIP ACTIVE" if uid in premium_users else VIP_TEXT
 
     else:
         text = "Updated."
@@ -152,39 +144,12 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.message.from_user.id
-    text = update.message.text.strip()
+    txt = update.message.text.strip()
 
     if context.user_data.get("add"):
-        favorites.setdefault(uid, []).append(text)
+        favorites.setdefault(uid, []).append(txt)
         context.user_data["add"] = False
-        await update.message.reply_text(f"✅ {text} added.", reply_markup=menu())
-
-    elif context.user_data.get("alert"):
-        favorites.setdefault(uid, []).append(text)
-        context.user_data["alert"] = False
-        await update.message.reply_text(f"🔔 Alerts enabled for {text}.", reply_markup=menu())
-
-# ================= GOAL ALERT JOB =================
-async def goal_checker(context: ContextTypes.DEFAULT_TYPE):
-    games = safe_get(f"{BASE_URL}/fixtures?live=all")
-    if not games:
-        return
-
-    for g in games:
-        fid = g["fixture"]["id"]
-        score = f"{g['goals']['home']}-{g['goals']['away']}"
-
-        if live_cache.get(fid) != score:
-            live_cache[fid] = score
-            for u, teams in favorites.items():
-                if (
-                    g["teams"]["home"]["name"] in teams
-                    or g["teams"]["away"]["name"] in teams
-                ):
-                    await context.bot.send_message(
-                        u,
-                        f"⚽ GOAL!\n{g['teams']['home']['name']} {score} {g['teams']['away']['name']}"
-                    )
+        await update.message.reply_text(f"✅ {txt} added.", reply_markup=menu())
 
 # ================= MAIN =================
 def main():
@@ -193,8 +158,6 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(buttons))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
-
-    app.job_queue.run_repeating(goal_checker, interval=60, first=10)
 
     app.run_polling()
 
