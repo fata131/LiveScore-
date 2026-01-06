@@ -1,130 +1,143 @@
 import os
 import requests
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
+import logging
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters
+)
 
-# ================= ENV =================
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-FOOTBALL_API_KEY = os.getenv("FOOTBALL_API_KEY")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+# ================= CONFIG =================
+BOT_TOKEN = os.getenv("BOT_TOKEN")  # already set on Railway
+FOOTBALL_API_KEY = "13c68bc4d00c421d41dae0288e21b60a"
+AI_API_KEY = "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"
 
-FOOTBALL_HEADERS = {
-    "x-rapidapi-key": FOOTBALL_API_KEY,
-    "x-rapidapi-host": "api-football-v1.p.rapidapi.com"
-}
+API_FOOTBALL_URL = "https://v3.football.api-sports.io"
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-FOOTBALL_BASE = "https://api-football-v1.p.rapidapi.com/v3"
+logging.basicConfig(level=logging.INFO)
 
-# ================= BUTTON UI (BOTTOM) =================
-keyboard = ReplyKeyboardMarkup(
+# ================= KEYBOARD =================
+MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [
-        ["⚽ Live Scores", "🏆 Leagues"],
-        ["⭐ My Team", "📊 Standings"],
-        ["🤖 AI Chat", "ℹ️ Help"]
+        [KeyboardButton("⚽ Live Scores"), KeyboardButton("🏆 Leagues")],
+        [KeyboardButton("⭐ My Team"), KeyboardButton("📊 Standings")],
+        [KeyboardButton("🤖 AI Chat"), KeyboardButton("ℹ️ Help")]
     ],
     resize_keyboard=True
 )
 
-# ================= START =================
+# ================= COMMANDS =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "⚽ *LiveScore Bot*\n\nChoose an option below 👇",
-        reply_markup=keyboard,
+        "👑 *Kings LiveScore Bot*\n\n"
+        "Live scores • leagues • AI chat\n\n"
+        "Use buttons below 👇",
+        reply_markup=MAIN_KEYBOARD,
         parse_mode="Markdown"
     )
 
-# ================= LIVE SCORES =================
-def get_live_scores():
-    r = requests.get(f"{FOOTBALL_BASE}/fixtures?live=all", headers=FOOTBALL_HEADERS)
-    data = r.json().get("response", [])
+# ================= FOOTBALL =================
+def football_api(endpoint, params=None):
+    headers = {
+        "x-apisports-key": FOOTBALL_API_KEY
+    }
+    r = requests.get(f"{API_FOOTBALL_URL}/{endpoint}", headers=headers, params=params)
+    return r.json()
 
-    if not data:
-        return "❌ No live matches now."
+async def live_scores(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    data = football_api("fixtures", {"live": "all"})
+    fixtures = data.get("response", [])
 
-    text = "🔥 LIVE MATCHES\n\n"
-    for m in data[:10]:
-        h = m["teams"]["home"]["name"]
-        a = m["teams"]["away"]["name"]
-        g = m["goals"]
-        text += f"{h} {g['home']} - {g['away']} {a}\n"
+    if not fixtures:
+        await update.message.reply_text("❌ No live matches now.")
+        return
 
-    return text
+    msg = "🔥 *Live Matches*\n\n"
+    for f in fixtures[:10]:
+        home = f["teams"]["home"]["name"]
+        away = f["teams"]["away"]["name"]
+        goals = f["goals"]
+        msg += f"{home} {goals['home']} - {goals['away']} {away}\n"
 
-# ================= LEAGUES =================
-def get_leagues():
-    r = requests.get(f"{FOOTBALL_BASE}/leagues", headers=FOOTBALL_HEADERS)
-    leagues = r.json().get("response", [])[:15]
+    await update.message.reply_text(msg, parse_mode="Markdown")
 
-    text = "🏆 TOP LEAGUES\n\n"
-    for l in leagues:
-        text += f"{l['league']['name']} ({l['country']['name']})\n"
-
-    return text
-
-# ================= STANDINGS =================
-def get_standings():
-    r = requests.get(
-        f"{FOOTBALL_BASE}/standings?league=39&season=2024",
-        headers=FOOTBALL_HEADERS
+async def leagues(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🏆 *Top Leagues*\n\n"
+        "🇬🇧 Premier League\n"
+        "🇪🇸 La Liga\n"
+        "🇮🇹 Serie A\n"
+        "🇩🇪 Bundesliga\n"
+        "🇫🇷 Ligue 1\n\n"
+        "➡️ Type league name to continue",
+        parse_mode="Markdown"
     )
-    table = r.json()["response"][0]["league"]["standings"][0][:10]
 
-    text = "📊 EPL STANDINGS\n\n"
-    for t in table:
-        text += f"{t['rank']}. {t['team']['name']} - {t['points']} pts\n"
+async def standings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("📊 Standings feature coming next update ✅")
 
-    return text
-
-# ================= AI CHAT =================
-def ai_chat(prompt):
-    r = requests.post(
-        "https://openrouter.ai/api/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json"
-        },
-        json={
-            "model": "openai/gpt-3.5-turbo",
-            "messages": [{"role": "user", "content": prompt}]
-        }
+async def my_team(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "⭐ *Choose Country*\n\n"
+        "England\nSpain\nItaly\nGermany\nFrance\n\n"
+        "➡️ Send country name",
+        parse_mode="Markdown"
     )
-    return r.json()["choices"][0]["message"]["content"]
+
+# ================= AI =================
+async def ai_reply(user_text: str):
+    headers = {
+        "Authorization": f"Bearer {AI_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    payload = {
+        "model": "meta-llama/llama-3-8b-instruct",
+        "messages": [
+            {"role": "system", "content": "You are a helpful football assistant."},
+            {"role": "user", "content": user_text}
+        ]
+    }
+
+    r = requests.post(OPENROUTER_URL, headers=headers, json=payload)
+    data = r.json()
+
+    try:
+        return data["choices"][0]["message"]["content"]
+    except:
+        return "⚠️ AI is temporarily unavailable."
 
 # ================= MESSAGE HANDLER =================
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
     if text == "⚽ Live Scores":
-        await update.message.reply_text(get_live_scores())
-
+        await live_scores(update, context)
     elif text == "🏆 Leagues":
-        await update.message.reply_text(get_leagues())
-
+        await leagues(update, context)
     elif text == "📊 Standings":
-        await update.message.reply_text(get_standings())
-
+        await standings(update, context)
     elif text == "⭐ My Team":
-        await update.message.reply_text("Feature active soon ✅")
-
-    elif text == "🤖 AI Chat":
-        context.user_data["ai"] = True
-        await update.message.reply_text("🤖 Ask me anything:")
-
-    elif context.user_data.get("ai"):
-        reply = ai_chat(text)
-        await update.message.reply_text(reply)
-
+        await my_team(update, context)
     elif text == "ℹ️ Help":
-        await update.message.reply_text(
-            "Use buttons below 👇\nLive scores • leagues • AI chat"
-        )
+        await update.message.reply_text("Use buttons below to explore features 👇")
+    elif text == "🤖 AI Chat":
+        await update.message.reply_text("🤖 Ask me anything:")
+    else:
+        # 🔥 ANY OTHER TEXT → AI AUTO REPLY
+        reply = await ai_reply(text)
+        await update.message.reply_text(reply)
 
 # ================= MAIN =================
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT, handle_message))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     app.run_polling()
 
