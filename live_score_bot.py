@@ -1,134 +1,131 @@
 import os
 import requests
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
-    filters,
-    ContextTypes,
+from telegram import Update, ReplyKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
+
+# ================= ENV =================
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+FOOTBALL_API_KEY = os.getenv("FOOTBALL_API_KEY")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+
+FOOTBALL_HEADERS = {
+    "x-rapidapi-key": FOOTBALL_API_KEY,
+    "x-rapidapi-host": "api-football-v1.p.rapidapi.com"
+}
+
+FOOTBALL_BASE = "https://api-football-v1.p.rapidapi.com/v3"
+
+# ================= BUTTON UI (BOTTOM) =================
+keyboard = ReplyKeyboardMarkup(
+    [
+        ["⚽ Live Scores", "🏆 Leagues"],
+        ["⭐ My Team", "📊 Standings"],
+        ["🤖 AI Chat", "ℹ️ Help"]
+    ],
+    resize_keyboard=True
 )
 
-# ---------------- ENV ----------------
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")   # Your Telegram bot token
-SPORTDB_KEY = os.getenv("SPORTDB_KEY")        # Your SportDB API key
-
-HEADERS = {
-    "X-API-Key": SPORTDB_KEY
-}
-
-BASE_URL = "https://api.sportdb.dev/api/flashscore"
-
-# ---------------- STORAGE ----------------
-favorites = {}      # User favorite teams
-live_cache = {}     # Keep track of last score to prevent duplicate alerts
-
-# VIP USERS
-premium_users = {
-    9167481626  # Lukmon Fatai Olamide (VIP)
-}
-
-# ---------------- API ----------------
-def live_matches():
-    try:
-        r = requests.get(f"{BASE_URL}/", headers=HEADERS, timeout=10).json()
-        matches = r.get("matches", [])
-        if not matches:
-            return "❌ No live matches now."
-
-        msg = "🔥 LIVE MATCHES\n\n"
-        for m in matches[:8]:
-            h = m["home"]["name"]
-            a = m["away"]["name"]
-            g = m.get("score", {})
-            msg += f"{h} {g.get('home', 0)} - {g.get('away', 0)} {a}\n"
-        return msg
-    except Exception as e:
-        return f"❌ Error fetching live matches: {e}"
-
-# ---------------- UI BUTTONS ----------------
-def menu():
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("🔥 Live", callback_data="live"),
-            InlineKeyboardButton("⭐ My Teams", callback_data="teams")
-        ],
-        [
-            InlineKeyboardButton("➕ Add Team", callback_data="add"),
-            InlineKeyboardButton("🔔 Goal Alerts", callback_data="alerts")
-        ],
-        [
-            InlineKeyboardButton("💎 VIP Zone", callback_data="vip"),
-            InlineKeyboardButton("🔄 Refresh", callback_data="refresh")
-        ]
-    ])
-
-# ---------------- HANDLERS ----------------
+# ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "⚽ *LiveScore Bot*\nReal football updates below 👇",
-        reply_markup=menu(),
+        "⚽ *LiveScore Bot*\n\nChoose an option below 👇",
+        reply_markup=keyboard,
         parse_mode="Markdown"
     )
 
-async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    uid = q.from_user.id
+# ================= LIVE SCORES =================
+def get_live_scores():
+    r = requests.get(f"{FOOTBALL_BASE}/fixtures?live=all", headers=FOOTBALL_HEADERS)
+    data = r.json().get("response", [])
 
-    if q.data == "live":
-        text = live_matches()
+    if not data:
+        return "❌ No live matches now."
 
-    elif q.data == "teams":
-        t = favorites.get(uid, [])
-        text = "⭐ Your Teams:\n" + ("\n".join(t) if t else "No teams yet.")
+    text = "🔥 LIVE MATCHES\n\n"
+    for m in data[:10]:
+        h = m["teams"]["home"]["name"]
+        a = m["teams"]["away"]["name"]
+        g = m["goals"]
+        text += f"{h} {g['home']} - {g['away']} {a}\n"
 
-    elif q.data == "add":
-        context.user_data["add"] = True
-        await q.edit_message_text("✍️ Send team name:")
-        return
+    return text
 
-    elif q.data == "alerts":
-        context.user_data["alert"] = True
-        await q.edit_message_text("🔔 Send team for alerts:")
-        return
+# ================= LEAGUES =================
+def get_leagues():
+    r = requests.get(f"{FOOTBALL_BASE}/leagues", headers=FOOTBALL_HEADERS)
+    leagues = r.json().get("response", [])[:15]
 
-    elif q.data == "vip":
-        if uid in premium_users:
-            text = "💎 VIP ACTIVE\n✔ Fast alerts\n✔ Priority updates\n✔ Exclusive features"
-        else:
-            text = "🔒 VIP ONLY\nContact admin to upgrade."
+    text = "🏆 TOP LEAGUES\n\n"
+    for l in leagues:
+        text += f"{l['league']['name']} ({l['country']['name']})\n"
 
-    else:
-        text = "Updated."
+    return text
 
-    await q.edit_message_text(text, reply_markup=menu())
+# ================= STANDINGS =================
+def get_standings():
+    r = requests.get(
+        f"{FOOTBALL_BASE}/standings?league=39&season=2024",
+        headers=FOOTBALL_HEADERS
+    )
+    table = r.json()["response"][0]["league"]["standings"][0][:10]
 
-async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.message.from_user.id
-    txt = update.message.text.strip()
+    text = "📊 EPL STANDINGS\n\n"
+    for t in table:
+        text += f"{t['rank']}. {t['team']['name']} - {t['points']} pts\n"
 
-    if context.user_data.get("add"):
-        favorites.setdefault(uid, []).append(txt)
-        context.user_data["add"] = False
-        await update.message.reply_text(f"✅ {txt} added", reply_markup=menu())
+    return text
 
-    elif context.user_data.get("alert"):
-        favorites.setdefault(uid, []).append(txt)
-        context.user_data["alert"] = False
-        await update.message.reply_text(f"🔔 Alerts set for {txt}", reply_markup=menu())
+# ================= AI CHAT =================
+def ai_chat(prompt):
+    r = requests.post(
+        "https://openrouter.ai/api/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json"
+        },
+        json={
+            "model": "openai/gpt-3.5-turbo",
+            "messages": [{"role": "user", "content": prompt}]
+        }
+    )
+    return r.json()["choices"][0]["message"]["content"]
 
-# ---------------- MAIN ----------------
+# ================= MESSAGE HANDLER =================
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+
+    if text == "⚽ Live Scores":
+        await update.message.reply_text(get_live_scores())
+
+    elif text == "🏆 Leagues":
+        await update.message.reply_text(get_leagues())
+
+    elif text == "📊 Standings":
+        await update.message.reply_text(get_standings())
+
+    elif text == "⭐ My Team":
+        await update.message.reply_text("Feature active soon ✅")
+
+    elif text == "🤖 AI Chat":
+        context.user_data["ai"] = True
+        await update.message.reply_text("🤖 Ask me anything:")
+
+    elif context.user_data.get("ai"):
+        reply = ai_chat(text)
+        await update.message.reply_text(reply)
+
+    elif text == "ℹ️ Help":
+        await update.message.reply_text(
+            "Use buttons below 👇\nLive scores • leagues • AI chat"
+        )
+
+# ================= MAIN =================
 def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).build()
 
-    # Handlers
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(buttons))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+    app.add_handler(MessageHandler(filters.TEXT, handle_message))
 
-    # Run the bot (this handles async loop internally)
     app.run_polling()
 
 if __name__ == "__main__":
